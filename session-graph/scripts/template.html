@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session Graph · __TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --text: #1f2328; --muted: #6b7280; --border: #e3e3df;
+  --project: #3b3b3b; --group: #8a6d3b; --idle: #4f7ccf; --running: #2e9e5b; --archived: #a3a3a3;
+  --edge: #c9c9c4; --chain: #b08bd6; --fork: #d9772b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17181a; --panel: #1f2124; --text: #e6e6e3; --muted: #9a9ca1; --border: #2e3034;
+    --project: #d6d6d2; --group: #d1a85e; --idle: #6f9bef; --running: #49c57c; --archived: #6b6d72;
+    --edge: #3c3f44; --chain: #9a78c4; --fork: #e8904a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; }
+header h1 { font-size: 17px; margin: 0; }
+header .meta { color: var(--muted); font-size: 12px; }
+.controls { display: flex; gap: 14px; flex-wrap: wrap; margin-left: auto; font-size: 13px; }
+.controls label { cursor: pointer; user-select: none; }
+main { display: grid; grid-template-columns: 1fr 360px; height: calc(100vh - 54px); min-height: 480px; }
+#graph { min-height: 420px; }
+aside { border-left: 1px solid var(--border); background: var(--panel); overflow: auto; padding: 16px 18px; }
+aside h2 { font-size: 15px; margin: 0 0 4px; }
+.kv { display: grid; grid-template-columns: 86px 1fr; gap: 4px 10px; font-size: 13px; margin: 10px 0; }
+.kv div:nth-child(odd) { color: var(--muted); }
+.quote { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; margin: 4px 0 10px; white-space: pre-wrap; word-break: break-word; }
+.label { color: var(--muted); font-size: 12px; margin-top: 10px; }
+.pill { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; color: #fff; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 14px; }
+th, td { text-align: left; padding: 5px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; cursor: pointer; }
+tr.row { cursor: pointer; } tr.row:hover, tr.sel { background: var(--bg); }
+a { color: var(--idle); }
+@media (max-width: 800px) {
+  main { grid-template-columns: 1fr; height: auto; }
+  #graph { height: 60vh; }
+  aside { border-left: 0; border-top: 1px solid var(--border); }
+  header { padding: 12px 16px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Session 关系图 · <span id="proj"></span></h1>
+  <span class="meta" id="meta"></span>
+  <div class="controls">
+    <label><input type="checkbox" id="fork" checked> fork 关系</label>
+    <label><input type="checkbox" id="chain" checked> 时间顺序连线</label>
+    <label><input type="checkbox" id="hideArchived"> 隐藏已归档</label>
+  </div>
+</header>
+<main>
+  <div id="graph"></div>
+  <aside>
+    <div id="detail"><h2>点击一个 session 查看详情</h2>
+      <div class="legend">
+        <span><span class="dot" style="background:var(--running)"></span>运行中</span>
+        <span><span class="dot" style="background:var(--idle)"></span>未运行</span>
+        <span><span class="dot" style="background:var(--archived)"></span>已归档</span>
+        <span>圆点大小 = context 占用</span>
+        <span><span style="color:var(--fork)">━▶</span> fork（原始 → 分出）</span>
+        <span><span style="color:var(--chain)">┅▶</span> 同组时间顺序</span>
+      </div>
+    </div>
+    <table><thead><tr><th data-k="title">Session</th><th data-k="end">最后活跃</th><th data-k="context">Context</th></tr></thead><tbody id="rows"></tbody></table>
+  </aside>
+</main>
+<script>
+const DATA = __DATA__;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmtTime = s => s ? new Date(s).toLocaleString() : "—";
+const fmtTok = n => !n ? "—" : n >= 1000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k" : String(n);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const ago = s => { if (!s) return ""; const m = (Date.now() - new Date(s)) / 60000;
+  return m < 60 ? Math.round(m) + " 分钟前" : m < 1440 ? Math.round(m / 60) + " 小时前" : Math.round(m / 1440) + " 天前"; };
+const color = s => s.archived ? css("--archived") : s.running ? css("--running") : css("--idle");
+const byId = Object.fromEntries(DATA.sessions.map(s => [s.id, s]));
+
+document.getElementById("proj").textContent = DATA.project;
+document.getElementById("meta").textContent =
+  `${DATA.sessions.length} 个 session · 生成于 ${fmtTime(DATA.generatedAt)}` +
+  (DATA.desktopMetadata ? "" : " · 无 desktop 数据（归档状态未知）");
+
+let network, sortKey = "start", sortDir = 1, selected = null;
+
+function build() {
+  const hideArch = document.getElementById("hideArchived").checked;
+  const chain = document.getElementById("chain").checked;
+  const fork = document.getElementById("fork").checked;
+  const list = DATA.sessions.filter(s => !(hideArch && s.archived));
+  const maxCtx = Math.max(1, ...list.map(s => s.context || 0));
+  const nodes = [{ id: "__project", label: DATA.project.split(/[\\/]/).pop() || DATA.project, shape: "box",
+    color: { background: css("--project"), border: css("--project") }, font: { color: css("--bg"), size: 15 }, margin: 10 }];
+  const edges = [];
+  const groups = {};
+  list.forEach(s => (groups[s.group] = groups[s.group] || []).push(s));
+  Object.entries(groups).forEach(([g, ss]) => {
+    const gid = "__g:" + g;
+    const [br, loc] = g.split(" @ ");
+    const short = loc ? `${br}\n📁 ${loc.split(/[\\/]/).filter(Boolean).slice(-1)[0]}` : br;
+    nodes.push({ id: gid, label: short, shape: "box", color: { background: css("--panel"), border: css("--group") },
+      font: { color: css("--group") }, borderWidth: 2, widthConstraint: { maximum: 200 },
+      title: `分组：${g}（${ss.length} 个 session）` });
+    edges.push({ from: "__project", to: gid, color: css("--edge"), width: 2 });
+    ss.sort((a, b) => a.start.localeCompare(b.start));
+    ss.forEach((s, i) => {
+      nodes.push({ id: s.id, label: s.title.length > 28 ? s.title.slice(0, 27) + "…" : s.title, shape: "dot",
+        size: 10 + 22 * Math.sqrt((s.context || 0) / maxCtx), color: { background: color(s), border: color(s) },
+        font: { color: css("--text"), size: 13 }, title: s.summary });
+      edges.push({ from: gid, to: s.id, color: css("--edge") });
+      const forkPair = fork && (s.forkOf === ss[i - 1]?.id || ss[i - 1]?.forkOf === s.id);
+      if (chain && i > 0 && !forkPair) edges.push({ from: ss[i - 1].id, to: s.id, arrows: "to", dashes: true,
+        color: css("--chain"), title: "时间顺序：前一个 → 后一个", smooth: { type: "curvedCW", roundness: 0.25 } });
+    });
+  });
+  const shown = new Set(list.map(s => s.id));
+  if (fork) list.forEach(s => {
+    if (!s.forkOf || !shown.has(s.forkOf)) return;
+    const pt = s.forkPoint ? (s.forkPoint.length > 18 ? s.forkPoint.slice(0, 17) + "…" : s.forkPoint) : "";
+    edges.push({ from: s.forkOf, to: s.id, arrows: "to", width: 2.5, color: css("--fork"),
+      label: "fork", font: { color: css("--fork"), size: 11, strokeWidth: 3, strokeColor: css("--bg") },
+      title: `fork：共享 ${s.forkShared} 条消息，在「${s.forkPoint || "?"}」之后分出`, smooth: { type: "curvedCCW", roundness: 0.2 } });
+  });
+  const el = document.getElementById("graph");
+  if (network) network.destroy();
+  network = new vis.Network(el, { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) }, {
+    physics: { solver: "forceAtlas2Based", stabilization: { iterations: 200 } },
+    interaction: { hover: true, tooltipDelay: 150 }, edges: { width: 1.2 } });
+  network.on("click", p => { const id = p.nodes[0]; if (id && byId[id]) show(id); });
+  renderRows(list);
+  if (selected && byId[selected]) network.selectNodes([selected]);
+}
+
+function show(id) {
+  selected = id;
+  const s = byId[id];
+  const status = s.archived ? ["已归档", "--archived"] : s.running ? ["运行中" + (s.status ? `（${s.status}）` : ""), "--running"] : ["未运行", "--idle"];
+  document.getElementById("detail").innerHTML = `
+    <h2>${esc(s.title)}</h2>
+    <span class="pill" style="background:var(${status[1]})">${status[0]}</span>
+    <div class="label">一句话摘要</div><div class="quote">${esc(s.summary)}</div>
+    ${forkInfo(s)}
+    <div class="kv">
+      <div>开始</div><div>${fmtTime(s.start)}</div>
+      <div>最后活跃</div><div>${fmtTime(s.end)}（${ago(s.end)}）</div>
+      <div>Context</div><div>${fmtTok(s.context)} tokens · ${s.userTurns} 轮提问</div>
+      <div>分组</div><div>${esc(s.group)}</div>
+      <div>归档</div><div>${s.archived === null ? "未知" : s.archived ? "是" : "否"}</div>
+      <div>来源</div><div>${esc(s.entrypoint || "—")}${s.model ? " · " + esc(s.model) : ""}</div>
+      <div>ID</div><div style="word-break:break-all">${esc(s.id)}</div>
+    </div>
+    ${s.link ? `<a href="${esc(s.link)}">在 Claude app 中打开</a>` : `<div class="label">继续这个 session：</div><div class="quote">claude --resume ${esc(s.id)}</div>`}
+    <div class="label">第一句提问</div><div class="quote">${esc(s.firstPrompt || "—")}</div>
+    <div class="label">最后一句提问</div><div class="quote">${esc(s.lastPrompt || "—")}</div>`;
+  document.querySelectorAll("tr.row").forEach(r => r.classList.toggle("sel", r.dataset.id === id));
+  network && network.selectNodes([id]);
+}
+
+function forkInfo(s) {
+  const link = id => byId[id] ? `<a href="#" data-go="${esc(id)}">${esc(byId[id].title)}</a>` : esc(id);
+  const kids = DATA.sessions.filter(x => x.forkOf === s.id);
+  let h = "";
+  if (s.forkOf) h += `<div class="label">fork 自</div><div class="quote">${link(s.forkOf)}<br>分叉点（之后各走各的）：「${esc(s.forkPoint || "?")}」<br>共享 ${s.forkShared} 条消息${s.forkAt ? " · " + fmtTime(s.forkAt) : ""}</div>`;
+  if (kids.length) h += `<div class="label">从这里 fork 出 ${kids.length} 个</div><div class="quote">${kids.map(k => "• " + link(k.id) + (k.forkPoint ? `<br>&nbsp;&nbsp;在「${esc(k.forkPoint.slice(0, 40))}」之后` : "")).join("<br>")}</div>`;
+  return h;
+}
+document.getElementById("detail").addEventListener("click", e => {
+  const id = e.target.dataset && e.target.dataset.go;
+  if (id) { e.preventDefault(); show(id); network && network.focus(id, { scale: 1.1, animation: true }); }
+});
+
+function renderRows(list) {
+  const rows = [...list].sort((a, b) => {
+    const x = a[sortKey] ?? "", y = b[sortKey] ?? "";
+    return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * sortDir;
+  });
+  document.getElementById("rows").innerHTML = rows.map(s => `
+    <tr class="row${s.id === selected ? " sel" : ""}" data-id="${esc(s.id)}">
+      <td><span class="dot" style="background:${color(s)}"></span>${esc(s.title)}</td>
+      <td>${ago(s.end)}</td><td>${fmtTok(s.context)}</td></tr>`).join("");
+  document.querySelectorAll("tr.row").forEach(r => r.onclick = () => { show(r.dataset.id); network.focus(r.dataset.id, { scale: 1.1, animation: true }); });
+}
+document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
+  const k = th.dataset.k; sortDir = sortKey === k ? -sortDir : (k === "title" ? 1 : -1); sortKey = k;
+  renderRows(DATA.sessions.filter(s => !(document.getElementById("hideArchived").checked && s.archived)));
+});
+document.getElementById("chain").onchange = build;
+document.getElementById("fork").onchange = build;
+document.getElementById("hideArchived").onchange = build;
+if (window.vis) build(); else document.getElementById("graph").innerHTML =
+  '<p style="padding:20px">无法加载 vis-network（需要联网访问 cdn.jsdelivr.net）。右侧列表仍可用。</p>', renderRows(DATA.sessions);
+</script>
+</body>
+</html>
