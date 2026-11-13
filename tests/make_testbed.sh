@@ -20,19 +20,19 @@ run() {  # prints the new session id
     python -c "import json,sys; print(json.load(sys.stdin)['session_id'])"
 }
 
-S1=$(run "我们在做一个 todo app。先只用一句话回答：todo 的数据结构应该有哪些字段？")
-run --resume "$S1" "好。再用一句话：存储先用 JSON 文件可以吗？" >/dev/null
-S2=$(run --resume "$S1" --fork-session "换个思路：如果改用 SQLite 存储，一句话说优缺点。")
+S1=$(run "We're building a todo app. In one sentence: which fields should a todo item have?")
+run --resume "$S1" "OK. In one sentence: is a JSON file fine for storage to start with?" >/dev/null
+S2=$(run --resume "$S1" --fork-session "Different idea: what are the pros and cons of SQLite for storage instead? One sentence.")
 git checkout -q feature/auth
-run "我们要给 todo app 加登录功能。一句话：用 session cookie 还是 JWT？" >/dev/null
-run "一句话：登录功能的单元测试应该覆盖哪些情况？" >/dev/null
+run "We're adding login to the todo app. In one sentence: session cookies or JWT?" >/dev/null
+run "In one sentence: which cases should the login unit tests cover?" >/dev/null
 git checkout -q main
-(cd .worktrees/ui && run "我们在试验 todo app 的新 UI。一句话：列表用卡片还是表格？" >/dev/null)
-(cd docs && run "一句话：README 里应该写哪些使用说明？" >/dev/null)
-run --resume "$S1" "一句话：JSON 文件放在哪个目录比较合适？" >/dev/null           # original keeps going
-run --resume "$S2" --fork-session "如果坚持用 SQLite，一句话：用 ORM 还是直接写 SQL？" >/dev/null  # fork of a fork
+(cd .worktrees/ui && run "We're trying a new UI for the todo app. In one sentence: cards or a table for the list?" >/dev/null)
+(cd docs && run "In one sentence: what usage instructions belong in the README?" >/dev/null)
+run --resume "$S1" "In one sentence: which directory should the JSON file live in?" >/dev/null           # original keeps going
+run --resume "$S2" --fork-session "If we stick with SQLite, in one sentence: an ORM or plain SQL?" >/dev/null  # fork of a fork
 git checkout -q feature/auth
-run --resume "$S1" --fork-session "回到数据结构：一句话，todo 要不要加 userId 字段来支持多用户登录？" >/dev/null  # 2nd fork, other branch
+run --resume "$S1" --fork-session "Back to the data model, in one sentence: should todos get a userId field for multi-user login?" >/dev/null  # 2nd fork, other branch
 git checkout -q main
 
 echo "testbed ready: $T"

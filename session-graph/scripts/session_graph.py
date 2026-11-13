@@ -361,7 +361,7 @@ def cmd_render(a: argparse.Namespace) -> None:
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     tpl = (Path(__file__).parent / "template.html").read_text(encoding="utf-8")
     page = tpl.replace("__TITLE__", html.escape(Path(data["project"]).name or data["project"]))
-    page = page.replace("__DATA__", payload)
+    page = page.replace("__LANG__", a.lang).replace("__DATA__", payload)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(page, encoding="utf-8")
     print(f"wrote {a.out}")
@@ -393,6 +393,7 @@ def main() -> None:
     r.add_argument("--summaries")
     r.add_argument("--out")
     r.add_argument("--open", action="store_true", help="open the page in the default browser")
+    r.add_argument("--lang", choices=["en", "zh"], default="en", help="page language (switchable on the page too)")
 
     a = p.parse_args()
     base = default_out_dir(a.cwd)

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh">
+<html lang="__LANG__">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -52,55 +52,106 @@ a { color: var(--idle); }
 </head>
 <body>
 <header>
-  <h1>Session 关系图 · <span id="proj"></span></h1>
+  <h1><span data-i="heading"></span> · <span id="proj"></span></h1>
   <span class="meta" id="meta"></span>
   <div class="controls">
-    <label><input type="checkbox" id="fork" checked> fork 关系</label>
-    <label><input type="checkbox" id="chain" checked> 时间顺序连线</label>
-    <label><input type="checkbox" id="hideArchived"> 隐藏已归档</label>
+    <label><input type="checkbox" id="fork" checked> <span data-i="forkToggle"></span></label>
+    <label><input type="checkbox" id="chain" checked> <span data-i="chainToggle"></span></label>
+    <label><input type="checkbox" id="hideArchived"> <span data-i="hideArchived"></span></label>
+    <a href="#" id="lang"></a>
   </div>
 </header>
 <main>
   <div id="graph"></div>
   <aside>
-    <div id="detail"><h2>点击一个 session 查看详情</h2>
-      <div class="legend">
-        <span><span class="dot" style="background:var(--running)"></span>运行中</span>
-        <span><span class="dot" style="background:var(--idle)"></span>未运行</span>
-        <span><span class="dot" style="background:var(--archived)"></span>已归档</span>
-        <span>圆点大小 = context 占用</span>
-        <span><span style="color:var(--fork)">━▶</span> fork（原始 → 分出）</span>
-        <span><span style="color:var(--chain)">┅▶</span> 同组时间顺序</span>
-      </div>
-    </div>
-    <table><thead><tr><th data-k="title">Session</th><th data-k="end">最后活跃</th><th data-k="context">Context</th></tr></thead><tbody id="rows"></tbody></table>
+    <div id="detail"></div>
+    <table><thead><tr><th data-k="title">Session</th><th data-k="end" data-i="lastActive"></th><th data-k="context">Context</th></tr></thead><tbody id="rows"></tbody></table>
   </aside>
 </main>
 <script>
 const DATA = __DATA__;
+const I18N = {
+  en: {
+    heading: "Session Graph", forkToggle: "Forks", chainToggle: "Time order", hideArchived: "Hide archived",
+    lastActive: "Last active", other: "中文",
+    meta: (n, t) => `${n} sessions · generated ${t}`, noDesktop: " · no desktop-app data (archived state unknown)",
+    pick: "Click a session to see details", running: "Running", idle: "Not running", archived: "Archived",
+    dotSize: "Dot size = context used", forkLegend: "fork (original → fork)", chainLegend: "time order in group",
+    group: (g, n) => `Group: ${g} (${n} sessions)`, chainTip: "Time order: earlier → later",
+    forkTip: (n, p) => `Fork: shares ${n} messages, split after “${p}”`,
+    summary: "One-line summary", start: "Started", end: "Last active", turns: "prompts", groupLbl: "Group",
+    archivedLbl: "Archived", unknown: "unknown", yes: "yes", no: "no", source: "Source",
+    openApp: "Open in the Claude app", resume: "Resume this session:", first: "First prompt", last: "Last prompt",
+    forkOf: "Forked from", splitAt: p => `Split point (they diverge after): “${p}”`, shared: n => `${n} shared messages`,
+    forks: n => `${n} fork${n > 1 ? "s" : ""} from here`, after: p => `after “${p}”`,
+    ago: (v, u) => `${v} ${["min", "h", "d"][u]} ago`,
+    offline: "Could not load vis-network (needs access to cdn.jsdelivr.net). The list on the right still works.",
+  },
+  zh: {
+    heading: "Session 关系图", forkToggle: "fork 关系", chainToggle: "时间顺序连线", hideArchived: "隐藏已归档",
+    lastActive: "最后活跃", other: "English",
+    meta: (n, t) => `${n} 个 session · 生成于 ${t}`, noDesktop: " · 无 desktop 数据（归档状态未知）",
+    pick: "点击一个 session 查看详情", running: "运行中", idle: "未运行", archived: "已归档",
+    dotSize: "圆点大小 = context 占用", forkLegend: "fork（原始 → 分出）", chainLegend: "同组时间顺序",
+    group: (g, n) => `分组：${g}（${n} 个 session）`, chainTip: "时间顺序：前一个 → 后一个",
+    forkTip: (n, p) => `fork：共享 ${n} 条消息，在「${p}」之后分出`,
+    summary: "一句话摘要", start: "开始", end: "最后活跃", turns: "轮提问", groupLbl: "分组",
+    archivedLbl: "归档", unknown: "未知", yes: "是", no: "否", source: "来源",
+    openApp: "在 Claude app 中打开", resume: "继续这个 session：", first: "第一句提问", last: "最后一句提问",
+    forkOf: "fork 自", splitAt: p => `分叉点（之后各走各的）：「${p}」`, shared: n => `共享 ${n} 条消息`,
+    forks: n => `从这里 fork 出 ${n} 个`, after: p => `在「${p}」之后`,
+    ago: (v, u) => `${v} ${["分钟", "小时", "天"][u]}前`,
+    offline: "无法加载 vis-network（需要联网访问 cdn.jsdelivr.net）。右侧列表仍可用。",
+  },
+};
+let LANG = "__LANG__" in I18N ? "__LANG__" : "en";
+try { LANG = localStorage.getItem("sg-lang") || LANG; } catch (e) {}
+let T = I18N[LANG];
+
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const fmtTime = s => s ? new Date(s).toLocaleString() : "—";
+const fmtTime = s => s ? new Date(s).toLocaleString(LANG === "zh" ? "zh-CN" : "en-US") : "—";
 const fmtTok = n => !n ? "—" : n >= 1000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k" : String(n);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const ago = s => { if (!s) return ""; const m = (Date.now() - new Date(s)) / 60000;
-  return m < 60 ? Math.round(m) + " 分钟前" : m < 1440 ? Math.round(m / 60) + " 小时前" : Math.round(m / 1440) + " 天前"; };
+  return m < 60 ? T.ago(Math.round(m), 0) : m < 1440 ? T.ago(Math.round(m / 60), 1) : T.ago(Math.round(m / 1440), 2); };
 const color = s => s.archived ? css("--archived") : s.running ? css("--running") : css("--idle");
 const byId = Object.fromEntries(DATA.sessions.map(s => [s.id, s]));
 
-document.getElementById("proj").textContent = DATA.project;
-document.getElementById("meta").textContent =
-  `${DATA.sessions.length} 个 session · 生成于 ${fmtTime(DATA.generatedAt)}` +
-  (DATA.desktopMetadata ? "" : " · 无 desktop 数据（归档状态未知）");
-
 let network, sortKey = "start", sortDir = 1, selected = null;
+
+function legend() {
+  return `<h2>${T.pick}</h2><div class="legend">
+    <span><span class="dot" style="background:var(--running)"></span>${T.running}</span>
+    <span><span class="dot" style="background:var(--idle)"></span>${T.idle}</span>
+    <span><span class="dot" style="background:var(--archived)"></span>${T.archived}</span>
+    <span>${T.dotSize}</span>
+    <span><span style="color:var(--fork)">━▶</span> ${T.forkLegend}</span>
+    <span><span style="color:var(--chain)">┅▶</span> ${T.chainLegend}</span></div>`;
+}
+
+function applyLang() {
+  T = I18N[LANG];
+  document.documentElement.lang = LANG === "zh" ? "zh" : "en";
+  document.querySelectorAll("[data-i]").forEach(el => el.textContent = T[el.dataset.i]);
+  document.getElementById("lang").textContent = T.other;
+  document.getElementById("proj").textContent = DATA.project;
+  document.getElementById("meta").textContent =
+    T.meta(DATA.sessions.length, fmtTime(DATA.generatedAt)) + (DATA.desktopMetadata ? "" : T.noDesktop);
+  if (selected) show(selected); else document.getElementById("detail").innerHTML = legend();
+}
 
 function build() {
   const hideArch = document.getElementById("hideArchived").checked;
   const chain = document.getElementById("chain").checked;
   const fork = document.getElementById("fork").checked;
   const list = DATA.sessions.filter(s => !(hideArch && s.archived));
+  renderRows(list);
+  if (!window.vis) {
+    document.getElementById("graph").innerHTML = `<p style="padding:20px">${T.offline}</p>`;
+    return;
+  }
   const maxCtx = Math.max(1, ...list.map(s => s.context || 0));
-  const nodes = [{ id: "__project", label: DATA.project.split(/[\\/]/).pop() || DATA.project, shape: "box",
+  const nodes = [{ id: "__project", label: DATA.project.split(/[\\/]/).filter(Boolean).pop() || DATA.project, shape: "box",
     color: { background: css("--project"), border: css("--project") }, font: { color: css("--bg"), size: 15 }, margin: 10 }];
   const edges = [];
   const groups = {};
@@ -110,59 +161,55 @@ function build() {
     const [br, loc] = g.split(" @ ");
     const short = loc ? `${br}\n📁 ${loc.split(/[\\/]/).filter(Boolean).slice(-1)[0]}` : br;
     nodes.push({ id: gid, label: short, shape: "box", color: { background: css("--panel"), border: css("--group") },
-      font: { color: css("--group") }, borderWidth: 2, widthConstraint: { maximum: 200 },
-      title: `分组：${g}（${ss.length} 个 session）` });
+      font: { color: css("--group") }, borderWidth: 2, widthConstraint: { maximum: 200 }, title: T.group(g, ss.length) });
     edges.push({ from: "__project", to: gid, color: css("--edge"), width: 2 });
     ss.sort((a, b) => a.start.localeCompare(b.start));
     ss.forEach((s, i) => {
-      nodes.push({ id: s.id, label: s.title.length > 28 ? s.title.slice(0, 27) + "…" : s.title, shape: "dot",
+      nodes.push({ id: s.id, label: s.title.length > 32 ? s.title.slice(0, 31) + "…" : s.title, shape: "dot",
         size: 10 + 22 * Math.sqrt((s.context || 0) / maxCtx), color: { background: color(s), border: color(s) },
         font: { color: css("--text"), size: 13 }, title: s.summary });
       edges.push({ from: gid, to: s.id, color: css("--edge") });
       const forkPair = fork && (s.forkOf === ss[i - 1]?.id || ss[i - 1]?.forkOf === s.id);
       if (chain && i > 0 && !forkPair) edges.push({ from: ss[i - 1].id, to: s.id, arrows: "to", dashes: true,
-        color: css("--chain"), title: "时间顺序：前一个 → 后一个", smooth: { type: "curvedCW", roundness: 0.25 } });
+        color: css("--chain"), title: T.chainTip, smooth: { type: "curvedCW", roundness: 0.25 } });
     });
   });
   const shown = new Set(list.map(s => s.id));
   if (fork) list.forEach(s => {
     if (!s.forkOf || !shown.has(s.forkOf)) return;
-    const pt = s.forkPoint ? (s.forkPoint.length > 18 ? s.forkPoint.slice(0, 17) + "…" : s.forkPoint) : "";
     edges.push({ from: s.forkOf, to: s.id, arrows: "to", width: 2.5, color: css("--fork"),
       label: "fork", font: { color: css("--fork"), size: 11, strokeWidth: 3, strokeColor: css("--bg") },
-      title: `fork：共享 ${s.forkShared} 条消息，在「${s.forkPoint || "?"}」之后分出`, smooth: { type: "curvedCCW", roundness: 0.2 } });
+      title: T.forkTip(s.forkShared, s.forkPoint || "?"), smooth: { type: "curvedCCW", roundness: 0.2 } });
   });
-  const el = document.getElementById("graph");
   if (network) network.destroy();
-  network = new vis.Network(el, { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) }, {
+  network = new vis.Network(document.getElementById("graph"), { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) }, {
     physics: { solver: "forceAtlas2Based", stabilization: { iterations: 200 } },
     interaction: { hover: true, tooltipDelay: 150 }, edges: { width: 1.2 } });
   network.on("click", p => { const id = p.nodes[0]; if (id && byId[id]) show(id); });
-  renderRows(list);
   if (selected && byId[selected]) network.selectNodes([selected]);
 }
 
 function show(id) {
   selected = id;
   const s = byId[id];
-  const status = s.archived ? ["已归档", "--archived"] : s.running ? ["运行中" + (s.status ? `（${s.status}）` : ""), "--running"] : ["未运行", "--idle"];
+  const status = s.archived ? [T.archived, "--archived"] : s.running ? [T.running + (s.status ? ` (${s.status})` : ""), "--running"] : [T.idle, "--idle"];
   document.getElementById("detail").innerHTML = `
     <h2>${esc(s.title)}</h2>
     <span class="pill" style="background:var(${status[1]})">${status[0]}</span>
-    <div class="label">一句话摘要</div><div class="quote">${esc(s.summary)}</div>
+    <div class="label">${T.summary}</div><div class="quote">${esc(s.summary)}</div>
     ${forkInfo(s)}
     <div class="kv">
-      <div>开始</div><div>${fmtTime(s.start)}</div>
-      <div>最后活跃</div><div>${fmtTime(s.end)}（${ago(s.end)}）</div>
-      <div>Context</div><div>${fmtTok(s.context)} tokens · ${s.userTurns} 轮提问</div>
-      <div>分组</div><div>${esc(s.group)}</div>
-      <div>归档</div><div>${s.archived === null ? "未知" : s.archived ? "是" : "否"}</div>
-      <div>来源</div><div>${esc(s.entrypoint || "—")}${s.model ? " · " + esc(s.model) : ""}</div>
+      <div>${T.start}</div><div>${fmtTime(s.start)}</div>
+      <div>${T.end}</div><div>${fmtTime(s.end)} (${ago(s.end)})</div>
+      <div>Context</div><div>${fmtTok(s.context)} tokens · ${s.userTurns} ${T.turns}</div>
+      <div>${T.groupLbl}</div><div>${esc(s.group)}</div>
+      <div>${T.archivedLbl}</div><div>${s.archived === null ? T.unknown : s.archived ? T.yes : T.no}</div>
+      <div>${T.source}</div><div>${esc(s.entrypoint || "—")}${s.model ? " · " + esc(s.model) : ""}</div>
       <div>ID</div><div style="word-break:break-all">${esc(s.id)}</div>
     </div>
-    ${s.link ? `<a href="${esc(s.link)}">在 Claude app 中打开</a>` : `<div class="label">继续这个 session：</div><div class="quote">claude --resume ${esc(s.id)}</div>`}
-    <div class="label">第一句提问</div><div class="quote">${esc(s.firstPrompt || "—")}</div>
-    <div class="label">最后一句提问</div><div class="quote">${esc(s.lastPrompt || "—")}</div>`;
+    ${s.link ? `<a href="${esc(s.link)}">${T.openApp}</a>` : `<div class="label">${T.resume}</div><div class="quote">claude --resume ${esc(s.id)}</div>`}
+    <div class="label">${T.first}</div><div class="quote">${esc(s.firstPrompt || "—")}</div>
+    <div class="label">${T.last}</div><div class="quote">${esc(s.lastPrompt || "—")}</div>`;
   document.querySelectorAll("tr.row").forEach(r => r.classList.toggle("sel", r.dataset.id === id));
   network && network.selectNodes([id]);
 }
@@ -171,8 +218,8 @@ function forkInfo(s) {
   const link = id => byId[id] ? `<a href="#" data-go="${esc(id)}">${esc(byId[id].title)}</a>` : esc(id);
   const kids = DATA.sessions.filter(x => x.forkOf === s.id);
   let h = "";
-  if (s.forkOf) h += `<div class="label">fork 自</div><div class="quote">${link(s.forkOf)}<br>分叉点（之后各走各的）：「${esc(s.forkPoint || "?")}」<br>共享 ${s.forkShared} 条消息${s.forkAt ? " · " + fmtTime(s.forkAt) : ""}</div>`;
-  if (kids.length) h += `<div class="label">从这里 fork 出 ${kids.length} 个</div><div class="quote">${kids.map(k => "• " + link(k.id) + (k.forkPoint ? `<br>&nbsp;&nbsp;在「${esc(k.forkPoint.slice(0, 40))}」之后` : "")).join("<br>")}</div>`;
+  if (s.forkOf) h += `<div class="label">${T.forkOf}</div><div class="quote">${link(s.forkOf)}<br>${esc(T.splitAt(s.forkPoint || "?"))}<br>${T.shared(s.forkShared)}${s.forkAt ? " · " + fmtTime(s.forkAt) : ""}</div>`;
+  if (kids.length) h += `<div class="label">${T.forks(kids.length)}</div><div class="quote">${kids.map(k => "• " + link(k.id) + (k.forkPoint ? `<br>&nbsp;&nbsp;${esc(T.after(k.forkPoint.slice(0, 50)))}` : "")).join("<br>")}</div>`;
   return h;
 }
 document.getElementById("detail").addEventListener("click", e => {
@@ -189,17 +236,22 @@ function renderRows(list) {
     <tr class="row${s.id === selected ? " sel" : ""}" data-id="${esc(s.id)}">
       <td><span class="dot" style="background:${color(s)}"></span>${esc(s.title)}</td>
       <td>${ago(s.end)}</td><td>${fmtTok(s.context)}</td></tr>`).join("");
-  document.querySelectorAll("tr.row").forEach(r => r.onclick = () => { show(r.dataset.id); network.focus(r.dataset.id, { scale: 1.1, animation: true }); });
+  document.querySelectorAll("tr.row").forEach(r => r.onclick = () => {
+    show(r.dataset.id); network && network.focus(r.dataset.id, { scale: 1.1, animation: true }); });
 }
+const visible = () => DATA.sessions.filter(s => !(document.getElementById("hideArchived").checked && s.archived));
 document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
   const k = th.dataset.k; sortDir = sortKey === k ? -sortDir : (k === "title" ? 1 : -1); sortKey = k;
-  renderRows(DATA.sessions.filter(s => !(document.getElementById("hideArchived").checked && s.archived)));
+  renderRows(visible());
 });
-document.getElementById("chain").onchange = build;
-document.getElementById("fork").onchange = build;
-document.getElementById("hideArchived").onchange = build;
-if (window.vis) build(); else document.getElementById("graph").innerHTML =
-  '<p style="padding:20px">无法加载 vis-network（需要联网访问 cdn.jsdelivr.net）。右侧列表仍可用。</p>', renderRows(DATA.sessions);
+document.getElementById("lang").onclick = e => {
+  e.preventDefault(); LANG = LANG === "en" ? "zh" : "en";
+  try { localStorage.setItem("sg-lang", LANG); } catch (err) {}
+  applyLang(); build();
+};
+["chain", "fork", "hideArchived"].forEach(id => document.getElementById(id).onchange = build);
+applyLang();
+build();
 </script>
 </body>
 </html>
