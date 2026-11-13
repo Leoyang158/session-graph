@@ -32,14 +32,14 @@ To keep context small, or to try a different idea, you split work into many Clau
 Requires Python 3.8+ (standard library only) and Claude Code.
 
 ```bash
-git clone REPO_URL
+git clone https://github.com/Leoyang158/session-graph.git
 cp -r session-graph/session-graph ~/.claude/skills/
 ```
 
 On Windows PowerShell:
 
 ```powershell
-git clone REPO_URL
+git clone https://github.com/Leoyang158/session-graph.git
 Copy-Item -Recurse session-graph\session-graph $HOME\.claude\skills\
 ```
 
@@ -107,14 +107,14 @@ Claude collects this project's sessions, writes the summaries, and opens the gra
 需要 Python 3.8+（只用标准库）和 Claude Code。
 
 ```bash
-git clone REPO_URL
+git clone https://github.com/Leoyang158/session-graph.git
 cp -r session-graph/session-graph ~/.claude/skills/
 ```
 
 Windows PowerShell：
 
 ```powershell
-git clone REPO_URL
+git clone https://github.com/Leoyang158/session-graph.git
 Copy-Item -Recurse session-graph\session-graph $HOME\.claude\skills\
 ```
 
