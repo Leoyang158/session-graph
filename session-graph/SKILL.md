@@ -41,10 +41,10 @@ All output goes to `~/.claude/session-graph/<project-slug>/` (call it `OUT`): `d
 
 5. **Render:**
    ```
-   python ~/.claude/skills/session-graph/scripts/session_graph.py render --cwd "<project>" [--lang zh]
+   python ~/.claude/skills/session-graph/scripts/session_graph.py render --cwd "<project>" --open [--lang zh]
    ```
    The page is in English by default; pass `--lang zh` when the user writes in Chinese (the page also has an EN / 中文 switch).
-   Then show `OUT/graph.html` to the user: in the Claude desktop app open it in the built-in browser (`preview_start` with its `file:///` URL); otherwise add `--open` to the render command to use the default browser.
+   `--open` shows `OUT/graph.html` in the user's default browser. Always use it, including in the Claude desktop app: do not use the built-in browser pane (`preview_start` with a `file:///` URL). That pane renders files outside the project folder as static snapshots without JavaScript, so the graph stays blank, and the pane may also be hidden. Also give the user the full path of `OUT/graph.html` in case no window pops up.
 
 6. **Report** in 2–4 lines: how many sessions, how they split into groups, which forks exist (original → fork), which are running, and the largest-context ones. Don't paste the whole list — the page has it.
 
